@@ -1,4 +1,35 @@
 <template>
+  <div v-if="!appReady" class="startup-overlay">
+    <div class="startup-card">
+      <div class="startup-mark">
+        <span class="startup-ring"></span>
+        <span class="startup-core"></span>
+      </div>
+
+      <div class="startup-kicker">LOW-ALTITUDE INTELLIGENT CHAIN</div>
+      <h1>低空智链 · 系统正在初始化</h1>
+      <p class="startup-desc">
+        首次访问需要初始化调度服务与三维场景，预计约 30–60 秒。
+      </p>
+      <p class="startup-emphasis">
+        请保持页面开启，请勿刷新或退出，系统就绪后将自动进入平台。
+      </p>
+
+      <div class="startup-status">
+        <span class="startup-pulse"></span>
+        <span>{{ backendStatusText }}</span>
+      </div>
+
+      <div class="startup-progress">
+        <i></i>
+      </div>
+
+      <div class="startup-foot">
+        <span>正在加载智能调度服务</span>
+        <span v-if="startupElapsedSeconds > 0">已等待 {{ startupElapsedSeconds }} 秒</span>
+      </div>
+    </div>
+  </div>
   <main class="dashboard-shell">
     <header class="topbar glass-card">
       <div class="brand-block">
@@ -269,10 +300,18 @@ const DRONE_HEIGHT = 132
 const CONFLICT_HEIGHT = 112
 const DEFAULT_API_BASE = 'https://low-altitude-dispatch-api.onrender.com'
 const API_BASE = String(import.meta.env.VITE_DISPATCH_API || DEFAULT_API_BASE).replace(/\/$/, '')
+const HEALTH_URL = `${API_BASE}/api/health`
+
+const appReady = ref(false)
+const backendReady = ref(false)
+const backendStatusText = ref('正在连接低空智能调度服务…')
+const startupElapsedSeconds = ref(0)
 
 let viewer = null
 let timer = null
 let syncTimer = null
+let keepAliveTimer = null
+let startupElapsedTimer = null
 let panHandler = null
 let panActive = false
 let conflictGhostEntity = null
@@ -488,12 +527,27 @@ const lastUpdatedText = computed(() => {
 })
 
 onMounted(async () => {
+  // 先保持启动遮罩，主动唤醒 Render 上的 Java 服务。
+  startStartupElapsedClock()
+  await wakeBackend()
+
+  // 后端就绪后再初始化 Cesium 与业务数据，避免评委看到接口报错或空白状态。
   await nextTick()
   initViewer()
   await refreshDashboard(false)
   applyScenarioState()
   drawScenario()
   renderByTime()
+
+  // 主界面准备完成后再移除启动遮罩。
+  appReady.value = true
+  stopStartupElapsedClock()
+
+  // 页面打开期间每 10 分钟保活一次；重新回到页面时也立即补一次心跳。
+  startBackendKeepAlive()
+  document.addEventListener('visibilitychange', handleVisibilityKeepAlive)
+  window.addEventListener('focus', keepBackendAlive)
+
   syncTimer = window.setInterval(() => {
     if (scenarioMode.value === 'live' && !playing.value) refreshDashboard(false)
   }, 8000)
@@ -501,11 +555,92 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopPlayback()
+  stopStartupElapsedClock()
   if (syncTimer) window.clearInterval(syncTimer)
+  if (keepAliveTimer) window.clearInterval(keepAliveTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityKeepAlive)
+  window.removeEventListener('focus', keepBackendAlive)
   if (panHandler && !panHandler.isDestroyed()) panHandler.destroy()
   window.removeEventListener('mouseup', stopPan)
   if (viewer && !viewer.isDestroyed()) viewer.destroy()
 })
+
+function startStartupElapsedClock() {
+  startupElapsedSeconds.value = 0
+  if (startupElapsedTimer) window.clearInterval(startupElapsedTimer)
+  startupElapsedTimer = window.setInterval(() => {
+    startupElapsedSeconds.value += 1
+    if (!backendReady.value && startupElapsedSeconds.value >= 8) {
+      backendStatusText.value = '调度服务正在启动，请保持页面开启…'
+    }
+  }, 1000)
+}
+
+function stopStartupElapsedClock() {
+  if (startupElapsedTimer) window.clearInterval(startupElapsedTimer)
+  startupElapsedTimer = null
+}
+
+async function probeBackendHealth() {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 75000)
+
+  try {
+    const response = await fetch(HEALTH_URL, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal
+    })
+
+    if (!response.ok) return false
+
+    const payload = await response.json().catch(() => null)
+    return Boolean(payload?.status === 'running' || payload?.success === true)
+  } catch {
+    return false
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+async function wakeBackend() {
+  backendReady.value = false
+  backendStatusText.value = '正在连接低空智能调度服务…'
+
+  while (!backendReady.value) {
+    const ok = await probeBackendHealth()
+
+    if (ok) {
+      backendReady.value = true
+      backendStatusText.value = '调度服务已连接，正在加载三维运行数据…'
+      return
+    }
+
+    backendStatusText.value = '调度服务正在启动，请保持页面开启…'
+    await new Promise(resolve => window.setTimeout(resolve, 3000))
+  }
+}
+
+async function keepBackendAlive() {
+  try {
+    await fetch(HEALTH_URL, {
+      method: 'GET',
+      cache: 'no-store'
+    })
+  } catch {
+    // 保活失败不打断当前三维界面；现有 8 秒数据同步仍会继续尝试恢复连接。
+  }
+}
+
+function startBackendKeepAlive() {
+  keepBackendAlive()
+  if (keepAliveTimer) window.clearInterval(keepAliveTimer)
+  keepAliveTimer = window.setInterval(keepBackendAlive, 10 * 60 * 1000)
+}
+
+function handleVisibilityKeepAlive() {
+  if (document.visibilityState === 'visible') keepBackendAlive()
+}
 
 async function refreshDashboard(forceRedraw = false) {
   if (dataLoading.value) return
@@ -1216,3 +1351,224 @@ function statusClass(status) { if (status === '可用') return 'available'; if (
 function formatSeconds(ms) { return `${Math.round(Number(ms || 0) / 1000)} s` }
 function formatNumber(value) { const n = Number(value ?? 0); return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') }
 </script>
+
+<style scoped>
+.startup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(20, 125, 190, 0.22), transparent 34%),
+    linear-gradient(145deg, #03101d 0%, #061827 48%, #020a12 100%);
+  color: #eef9ff;
+}
+
+.startup-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.22;
+  background-image:
+    linear-gradient(rgba(86, 210, 255, 0.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(86, 210, 255, 0.11) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 92%);
+}
+
+.startup-card {
+  position: relative;
+  width: min(680px, calc(100vw - 48px));
+  padding: 52px 54px 40px;
+  border: 1px solid rgba(112, 222, 255, 0.2);
+  border-radius: 24px;
+  background: rgba(5, 20, 34, 0.9);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  text-align: center;
+  overflow: hidden;
+}
+
+.startup-card::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(80, 214, 255, 0.9), transparent);
+}
+
+.startup-mark {
+  position: relative;
+  width: 74px;
+  height: 74px;
+  margin: 0 auto 24px;
+}
+
+.startup-ring,
+.startup-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+.startup-ring {
+  border: 2px solid rgba(70, 218, 255, 0.18);
+  border-top-color: #52d8ff;
+  border-right-color: rgba(82, 216, 255, 0.7);
+  animation: startup-spin 1.15s linear infinite;
+}
+
+.startup-core {
+  inset: 17px;
+  border: 1px solid rgba(82, 216, 255, 0.42);
+  background: radial-gradient(circle, rgba(82, 216, 255, 0.3), rgba(82, 216, 255, 0.03) 68%);
+  box-shadow: 0 0 28px rgba(82, 216, 255, 0.18);
+}
+
+.startup-kicker {
+  margin-bottom: 10px;
+  color: #59d8ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+}
+
+.startup-card h1 {
+  margin: 0;
+  color: #f5fbff;
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.startup-desc {
+  margin: 22px 0 8px;
+  color: rgba(225, 241, 250, 0.82);
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.startup-emphasis {
+  margin: 0;
+  color: #dff7ff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.8;
+}
+
+.startup-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 10px 16px;
+  border: 1px solid rgba(82, 216, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(34, 139, 181, 0.09);
+  color: #aeeeff;
+  font-size: 13px;
+}
+
+.startup-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #50dcff;
+  box-shadow: 0 0 0 0 rgba(80, 220, 255, 0.5);
+  animation: startup-pulse 1.6s ease-out infinite;
+}
+
+.startup-progress {
+  position: relative;
+  height: 3px;
+  margin-top: 26px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(102, 218, 255, 0.1);
+}
+
+.startup-progress i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, #51d9ff, transparent);
+  animation: startup-progress 1.8s ease-in-out infinite;
+}
+
+.startup-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 12px;
+  color: rgba(188, 216, 230, 0.52);
+  font-size: 11px;
+}
+
+@keyframes startup-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes startup-pulse {
+  70% { box-shadow: 0 0 0 8px rgba(80, 220, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(80, 220, 255, 0); }
+}
+
+@keyframes startup-progress {
+  0% { left: -42%; }
+  55% { left: 52%; }
+  100% { left: 108%; }
+}
+
+@media (max-width: 640px) {
+  .startup-overlay {
+    padding: 18px;
+  }
+
+  .startup-card {
+    width: calc(100vw - 36px);
+    padding: 40px 22px 30px;
+    border-radius: 18px;
+  }
+
+  .startup-mark {
+    width: 62px;
+    height: 62px;
+    margin-bottom: 20px;
+  }
+
+  .startup-core {
+    inset: 14px;
+  }
+
+  .startup-kicker {
+    font-size: 10px;
+    letter-spacing: 0.13em;
+  }
+
+  .startup-card h1 {
+    font-size: 24px;
+  }
+
+  .startup-desc,
+  .startup-emphasis {
+    font-size: 14px;
+  }
+
+  .startup-foot {
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+  }
+}
+</style>
+
