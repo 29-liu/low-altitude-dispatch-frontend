@@ -35,14 +35,14 @@
       <div class="brand-block">
         <div class="brand-kicker">LOW-ALTITUDE INTELLIGENT CHAIN</div>
         <h1>低空智链 · 城市无人机智能协同调度平台</h1>
-        <p>Cesium 三维态势 · Java V3.4 Multi-Constraint Space-Time A* · 当前调度快照</p>
+        <p>Cesium 三维态势 · Java V3.5 Multi-Constraint Space-Time A* · 当前调度快照</p>
       </div>
 
       <div class="topbar-actions">
-        <span class="system-badge" :class="{ offline: dataError }"><i></i>{{ dataError ? '数据接口异常' : 'Java V3.4 已连接' }}</span>
+        <span class="system-badge" :class="{ offline: dataError }"><i></i>{{ dataError ? '数据接口异常' : 'Java V3.5 已连接' }}</span>
         <span class="mode-badge">{{ scenarioMode === 'live' ? '当前数据' : '验证演示' }}</span>
 
-        <div class="scenario-switch" title="当前数据来自 Java V3.4；冲突演示保留已验证的双机案例">
+        <div class="scenario-switch" title="当前数据来自 Java V3.5；冲突演示保留已验证的双机案例">
           <button :class="{ active: scenarioMode === 'live' }" @click="switchScenario('live')">当前数据</button>
           <button :class="{ active: scenarioMode === 'demo' }" @click="switchScenario('demo')">冲突演示</button>
         </div>
@@ -188,11 +188,11 @@
         <div v-if="currentMission.hasRoute" class="algorithm-row">
           <span>规划算法</span>
           <b>{{ currentMission.algorithm }}</b>
-          <em>{{ scenarioMode === 'live' ? 'V3.4' : '验证案例' }}</em>
+          <em>{{ scenarioMode === 'live' ? 'V3.5' : '验证案例' }}</em>
         </div>
         <div v-else class="mission-empty-note">{{ currentMission.note }}</div>
 
-        <div class="mission-switch-hint">点击左侧无人机，可切换对应状态/任务。当前数据模式来自 Java V3.4 最近一次调度快照，不代表真实飞控遥测。</div>
+        <div class="mission-switch-hint">点击左侧无人机，可切换对应状态/任务。当前数据模式来自 Java V3.5 最近一次调度快照，不代表真实飞控遥测。</div>
       </section>
 
       <section class="glass-card constraint-card">
@@ -279,7 +279,7 @@
       <div class="log-title">
         <span class="live-dot"></span>
         <b>系统运行日志</b>
-        <em>{{ scenarioMode === 'live' ? 'Java V3.4 / 当前调度快照' : '已验证双机冲突案例' }}</em>
+        <em>{{ scenarioMode === 'live' ? 'Java V3.5 / 当前调度快照' : '已验证双机冲突案例' }}</em>
       </div>
       <div class="log-stream">
         <span v-for="(log, index) in visibleLogs" :key="index"><i>{{ log.time }}</i>{{ log.text }}</span>
@@ -543,7 +543,7 @@ const visibleLogs = computed(() => {
       { time: 'DEMO', text: '避让后剩余冲突降至0，预计3.35 min。' }
     ]
   }
-  if (!hasLiveData.value) return [{ time: 'SYNC', text: dataError.value || '等待 Java V3.4 当前调度快照…' }]
+  if (!hasLiveData.value) return [{ time: 'SYNC', text: dataError.value || '等待 Java V3.5 当前调度快照…' }]
   const s = constraintStats.value
   const c = conflictStats.value
   return [
@@ -699,7 +699,7 @@ async function refreshDashboard(forceRedraw = false) {
     lastSnapshotSignature.value = incomingSignature
     if (scenarioMode.value === 'live' && (changed || forceRedraw)) redrawFromState()
   } catch (error) {
-    dataError.value = `无法读取 Java V3.4：${error?.message || error}`
+    dataError.value = `无法读取 Java V3.5：${error?.message || error}`
   } finally {
     dataLoading.value = false
   }
