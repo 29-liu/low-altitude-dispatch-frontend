@@ -401,6 +401,37 @@ const conflictStats = computed(() => {
 
 const constraintSatisfiedText = computed(() => constraintStats.value.satisfied ? '约束满足' : '存在违规')
 
+// 只把“仍然绑定在无人机 currentTask 上”的已分配/执行中计划视为当前活动计划。
+// 这样即使数据库里残留旧测试计划，也不会继续显示在右侧任务卡片或地图航迹中。
+function isPlanCurrentlyBound(plan) {
+  if (!plan) return false
+
+  const status = String(plan.status || '').trim()
+  if (status !== '已分配' && status !== '执行中') return false
+
+  const droneId = String(plan.droneId || '').trim()
+  const taskId = String(plan.taskId || '').trim()
+  if (!droneId || !taskId || taskId === '无') return false
+
+  const drone = fleet.value.find(d => String(d.id || '') === droneId)
+  if (!drone) return false
+
+  const currentTask = String(drone.currentTask || '').trim()
+  const droneStatus = String(drone.status || '').trim()
+
+  return (
+    currentTask &&
+    currentTask !== '无' &&
+    currentTask === taskId &&
+    (droneStatus === '已分配' || droneStatus === '执行中')
+  )
+}
+
+function getBoundActivePlans(snapshot = liveSnapshot.value) {
+  const rows = Array.isArray(snapshot?.flightPlans) ? snapshot.flightPlans : []
+  return rows.filter(isPlanCurrentlyBound)
+}
+
 const currentMission = computed(() => {
   const droneId = selectedDroneId.value
   const drone = fleet.value.find(d => d.id === droneId)
@@ -414,7 +445,7 @@ const currentMission = computed(() => {
 
   if (scenarioMode.value === 'live' && liveSnapshot.value) {
     const d = liveSnapshot.value
-    const activePlans = Array.isArray(d.flightPlans) ? d.flightPlans : []
+    const activePlans = getBoundActivePlans(d)
     const activePlan = activePlans.find(p => String(p.droneId || '') === droneId)
 
     // 第一优先级：正式“已分配/执行中”飞行计划。
@@ -494,12 +525,12 @@ function activePlanMatchesSnapshotRoute(plan, snapshot) {
 
 const activePlanSummaries = computed(() => {
   if (scenarioMode.value === 'demo') return [{ id: 'TASK-A', droneId: 'UAV-05', taskId: 'TASK-A · 医院G→急救站H', status: '已有计划' }]
-  const rows = Array.isArray(liveSnapshot.value?.flightPlans) ? liveSnapshot.value.flightPlans : []
+  const rows = getBoundActivePlans()
   return rows.map((p, i) => ({ id: p.planId || `plan-${i}`, droneId: String(p.droneId || ''), taskId: String(p.taskId || p.planId || '活动计划'), status: String(p.status || '活动') }))
 })
 const activePlanDisplayCount = computed(() => {
   if (scenarioMode.value === 'demo') return 1
-  return Array.isArray(liveSnapshot.value?.flightPlans) ? liveSnapshot.value.flightPlans.length : 0
+  return getBoundActivePlans().length
 })
 
 const visibleLogs = computed(() => {
@@ -811,7 +842,7 @@ function applyScenarioState() {
   const result = d.dispatchResult || {}
   const currentPath = Array.isArray(result.path) ? result.path.map(p => ({ x: Number(p.x), y: Number(p.y), tMs: Number(p.tMs ?? 0) })) : []
   const assigned = String(result.assignedDrone || '')
-  const rawActivePlans = Array.isArray(d.flightPlans) ? d.flightPlans : []
+  const rawActivePlans = getBoundActivePlans(d)
   const currentPlans = []
 
   for (const fp of rawActivePlans) {
@@ -836,6 +867,9 @@ function applyScenarioState() {
     selectedDroneId.value = String(runningPlan.droneId)
   } else if (d.lastUpdateType === 'dispatch' && assigned) {
     selectedDroneId.value = assigned
+  } else {
+    const selectedStillExists = fleet.value.some(drone => drone.id === selectedDroneId.value)
+    if (!selectedStillExists && fleet.value.length) selectedDroneId.value = fleet.value[0].id
   }
 
   const wait = findWaitEvent(currentPath, Number(result.stepMs || 1000))
@@ -928,7 +962,7 @@ function drawLiveRoutes() {
   const result = d?.dispatchResult || {}
   const latestPath = Array.isArray(result.path) ? result.path.map(p => ({ x: Number(p.x), y: Number(p.y), tMs: Number(p.tMs ?? 0) })) : []
   const assigned = String(result.assignedDrone || '')
-  const rawActivePlans = Array.isArray(d?.flightPlans) ? d.flightPlans : []
+  const rawActivePlans = getBoundActivePlans(d)
 
   // 1) 正式活动飞行计划优先绘制。选中的/执行中的计划使用完整高亮航迹。
   for (const fp of rawActivePlans) {
