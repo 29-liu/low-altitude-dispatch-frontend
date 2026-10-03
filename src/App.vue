@@ -440,7 +440,11 @@ const currentMission = computed(() => {
     }
 
     // 第二优先级：最近一次 Java 调度结果。仅作为尚未正式入库的规划预览。
-    if (hasLiveData.value && droneId === String(liveDispatch.value.assignedDrone || '')) {
+    if (
+      hasLiveData.value &&
+      d.lastUpdateType === 'dispatch' &&
+      droneId === String(liveDispatch.value.assignedDrone || '')
+    ) {
       const taskLabel = fallbackTask && fallbackTask !== '无' ? fallbackTask : '规划预览（未入库）'
       return {
         tag: '当前算法结果',
@@ -824,9 +828,15 @@ function applyScenarioState() {
   maxEndMs.value = Math.max(1000, maxPathEnd || Number(currentPath[currentPath.length - 1]?.tMs || 99000))
 
   // 优先查看正在执行的正式计划；没有活动计划时再查看最近一次算法分配对象。
-  const runningPlan = rawActivePlans.find(fp => String(fp.status || '') === '执行中') || rawActivePlans[0]
-  if (runningPlan?.droneId) selectedDroneId.value = String(runningPlan.droneId)
-  else if (assigned) selectedDroneId.value = assigned
+  const runningPlan =
+    rawActivePlans.find(fp => String(fp.status || '') === '执行中')
+    || rawActivePlans[0]
+
+  if (runningPlan?.droneId) {
+    selectedDroneId.value = String(runningPlan.droneId)
+  } else if (d.lastUpdateType === 'dispatch' && assigned) {
+    selectedDroneId.value = assigned
+  }
 
   const wait = findWaitEvent(currentPath, Number(result.stepMs || 1000))
   if (wait) liveConflictPoint = wait
@@ -933,7 +943,11 @@ function drawLiveRoutes() {
   }
 
   // 2) 最近一次 Java 调度结果作为“规划预览”。如果已经与正式计划完全相同则不重复绘制。
-  if (latestPath.length && assigned) {
+  if (
+    d?.lastUpdateType === 'dispatch' &&
+    latestPath.length &&
+    assigned
+  ) {
     const duplicatedByActivePlan = rawActivePlans.some(fp => String(fp.droneId || '') === assigned && sameGridPath(fp.path, latestPath))
     if (!duplicatedByActivePlan) {
       const pickupX = Number(d.pickup?.x ?? 0), pickupY = Number(d.pickup?.y ?? 0)
@@ -1571,4 +1585,3 @@ function formatNumber(value) { const n = Number(value ?? 0); return Number.isInt
   }
 }
 </style>
-
