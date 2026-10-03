@@ -566,13 +566,15 @@ onMounted(async () => {
   startStartupElapsedClock()
   await wakeBackend()
 
-  // 后端就绪后再初始化 Cesium 与业务数据，避免评委看到接口报错或空白状态。
+  // 后端就绪后初始化 Cesium。
   await nextTick()
   initViewer()
-  await refreshDashboard(false)
-  applyScenarioState()
-  drawScenario()
-  renderByTime()
+
+  // 首次加载只走 refreshDashboard(true)。
+  // refreshDashboard 内部会调用 redrawFromState()，其中已经包含：
+  // applyScenarioState() -> clearScenarioEntities() -> drawScenario() -> renderByTime()。
+  // 这样可以避免首次进入页面时重复 drawScenario()，从而避免同一架无人机被创建两次。
+  await refreshDashboard(true)
 
   // 主界面准备完成后再移除启动遮罩。
   appReady.value = true
@@ -584,7 +586,9 @@ onMounted(async () => {
   window.addEventListener('focus', keepBackendAlive)
 
   syncTimer = window.setInterval(() => {
-    if (scenarioMode.value === 'live' && !playing.value) refreshDashboard(false)
+    if (scenarioMode.value === 'live' && !playing.value) {
+      refreshDashboard(false)
+    }
   }, 8000)
 })
 
